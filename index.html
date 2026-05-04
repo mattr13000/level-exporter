@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Level Matrix Generator</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        button {
+            padding: 10px 15px;
+            margin-top: 10px;
+            cursor: pointer;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+
+        pre {
+            background: #111;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            color: #00ff00;
+        }
+
+        .grid-preview {
+            font-family: monospace;
+            letter-spacing: 5px;
+            line-height: 1.5;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h1>Map Baker 🗺️</h1>
+        <p>Select your Blender level file (.glb) to generate collision data.</p>
+
+        <input type="file" id="fileInput" accept=".glb">
+        <button id="downloadBtn" disabled>Download map.json</button>
+
+        <div id="preview" class="grid-preview">Waiting for a file...</div>
+        <pre id="jsonOutput">The JSON will be displayed here...</pre>
+    </div>
+
+    <!-- Import Three.js and GLTFLoader from a CDN so the tool works anywhere -->
+    <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+</script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        let finalMapData = null;
+
+        document.getElementById('fileInput').addEventListener('change', function (event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // Create a temporary URL for the local file
+            const fileUrl = URL.createObjectURL(file);
+            const loader = new GLTFLoader();
+
+            loader.load(fileUrl, (gltf) => {
+                console.log("File loaded, parsing in progress...");
+                parseLevel(gltf.scene);
+            }, undefined, (error) => {
+                console.error(error);
+                alert("Error reading the GLB file.");
+            });
+        });
+
+        function parseLevel(scene) {
+            const tiles = [];
+            const mapData = {
+                name: "level_01", // You can change this
+                width: 0,
+                height: 0,
+                offsetX: 0,
+                offsetZ: 0,
+                matrix: [],
+                spawn_player: null,
+                spawn_monsters: [],
+                triggers: []
+            };
+
+            // 1. Scan the scene
+            scene.traverse((child) => {
+                // Read tiles via Custom Property
+                if (child.userData && child.userData.walkable !== undefined) {
+                    tiles.push({
+                        x: Math.round(child.position.x),
+                        z: Math.round(child.position.z),
+                        val: child.userData.walkable
+                    });
+                }
+
+                // Read Empties
+                if (child.name.includes('SPAWN_player')) {
+                    mapData.spawn_player = { x: Math.round(child.position.x), z: Math.round(child.position.z) };
+                } else if (child.name.includes('SPAWN_monster')) {
+                    mapData.spawn_monsters.push({ x: Math.round(child.position.x), z: Math.round(child.position.z) });
+                } else if (child.name.includes('trigger_')) {
+                    // Extract the destination name (e.g., trigger_forest -> forest)
+                    const target = child.name.replace('trigger_', '');
+                    mapData.triggers.push({
+                        target: target,
+                        x: Math.round(child.position.x),
+                        z: Math.round(child.position.z)
+                    });
+                }
+            });
+
+            if (tiles.length === 0) {
+                alert("No 'walkable' property found!");
+                return;
+            }
+
+            // 2. Calculate dimensions
+            const minX = Math.min(...tiles.map(t => t.x));
+            const maxX = Math.max(...tiles.map(t => t.x));
+            const minZ = Math.min(...tiles.map(t => t.z));
+            const maxZ = Math.max(...tiles.map(t => t.z));
+
+            mapData.width = maxX - minX + 1;
+            mapData.height = maxZ - minZ + 1;
+            mapData.offsetX = minX;
+            mapData.offsetZ = minZ;
+
+            // 3. Create the grid (Filled with walls '1' by default)
+            mapData.matrix = Array(mapData.height).fill().map(() => Array(mapData.width).fill(1));
+
+            tiles.forEach(t => {
+                const gridX = t.x - minX;
+                const gridZ = t.z - minZ;
+                mapData.matrix[gridZ][gridX] = t.val;
+            });
+
+            // 4. Display and Enable download
+            finalMapData = mapData;
+
+            // Text display of the matrix with colors
+            let previewText = "";
+            for (let z = 0; z < mapData.height; z++) {
+                let rowText = "";
+                for (let x = 0; x < mapData.width; x++) {
+                    // Recalculate raw coordinates to check if an entity is on this tile
+                    const realX = x + mapData.offsetX;
+                    const realZ = z + mapData.offsetZ;
+
+                    const isPlayerSpawn = mapData.spawn_player && mapData.spawn_player.x === realX && mapData.spawn_player.z === realZ;
+                    const isMonsterSpawn = mapData.spawn_monsters.some(m => m.x === realX && m.z === realZ);
+                    const isTrigger = mapData.triggers.some(t => t.x === realX && t.z === realZ);
+
+                    if (isPlayerSpawn) {
+                        rowText += '🟦'; // Blue: Player
+                    } else if (isTrigger) {
+                        rowText += '🟩'; // Green: Portal / Exit
+                    } else if (isMonsterSpawn) {
+                        rowText += '🟥'; // Red: Monster
+                    } else {
+                        rowText += mapData.matrix[z][x] === 1 ? '⬛' : '⬜'; // Black: Wall, White: Floor
+                    }
+                }
+                previewText += rowText + '\n';
+            }
+            document.getElementById('preview').innerText = previewText;
+
+            // Display pure JSON
+            document.getElementById('jsonOutput').innerText = JSON.stringify(mapData, null, 2);
+
+            // Enable the button
+            const btn = document.getElementById('downloadBtn');
+            btn.disabled = false;
+            btn.onclick = () => downloadJSON(mapData, "map_data.json");
+        }
+
+        function downloadJSON(data, filename) {
+            const jsonStr = JSON.stringify(data, null, 2);
+            const blob = new Blob([jsonStr], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    </script>
+
+</body>
+
+</html>
