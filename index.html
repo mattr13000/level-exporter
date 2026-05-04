@@ -85,23 +85,24 @@
             const file = event.target.files[0];
             if (!file) return;
 
-            // Create a temporary URL for the local file
+            const baseFileName = file.name.replace(/\.[^/.]+$/, "");
+
             const fileUrl = URL.createObjectURL(file);
             const loader = new GLTFLoader();
 
             loader.load(fileUrl, (gltf) => {
-                console.log("File loaded, parsing in progress...");
-                parseLevel(gltf.scene);
+                console.log("Fichier chargé, analyse en cours...");
+                parseLevel(gltf.scene, baseFileName);
             }, undefined, (error) => {
                 console.error(error);
-                alert("Error reading the GLB file.");
+                alert("Erreur lors de la lecture du fichier GLB.");
             });
         });
 
-        function parseLevel(scene) {
+        function parseLevel(scene, baseFileName) {
             const tiles = [];
             const mapData = {
-                name: "level_01", // You can change this
+                name: baseFileName,
                 width: 0,
                 height: 0,
                 offsetX: 0,
@@ -200,7 +201,7 @@
             // Enable the button
             const btn = document.getElementById('downloadBtn');
             btn.disabled = false;
-            btn.onclick = () => downloadJSON(mapData, "map_data.json");
+            btn.onclick = () => downloadJSON(mapData, `${baseFileName}_data.json`);
         }
 
         function downloadJSON(data, filename) {
